@@ -1,0 +1,176 @@
+import pyodbc
+import mysql.connector
+import sqlalchemy
+from sqlalchemy import create_engine
+from mysql.connector import Error  # Add this line
+import pandas as pd
+import os
+
+# SQL Server connection parameters
+sql_server = 'MAXDALSQLPRD01\REPORTING'
+sql_username = 'mfgdwoper'
+sql_password = 'opr$DW1MfgP15'
+sql_database = 'DW_MFG'
+
+# MySQL connection parameters
+mysql_host_gmsprd = 'mfnmfgitdb01l.maxim-ic.com'
+mysql_user_gmsprd = 'infraprdapp'
+mysql_password_gmsprd = 'infraprdapp2015'
+mysql_database_gmsprd = 'GMSPRD'
+
+# MySQL connection parameters
+mysql_host_kanchandb = 'localhost'
+mysql_user_kanchandb = 'root'
+mysql_password_kanchandb = 'root'
+mysql_database_kanchandb= 'kanchandb'
+
+# Create SQLAlchemy engine
+engine = create_engine(f'mssql+pyodbc://{sql_username}:{sql_password}@{sql_server}/{sql_database}?driver=ODBC+Driver+17+for+SQL+Server')
+
+connection = mysql.connector.connect(host=mysql_host_gmsprd, user=mysql_user_gmsprd, password=mysql_password_gmsprd, database=mysql_database_gmsprd)
+
+try:
+    # SQL query to fetch data (customize this query)
+    sql_query = 'select DisplayName, AD_NAME, JOB_TITLE, EMAIL, ORGANIZATION, SUB_ORG, SUPERVISORNAME, SUPERVISOR_NO, supervisoremail, EMPLOYEE_NO from [dbo].[V_WORKDAY] where EMPLOYEE_NO = 11199'
+
+    # Use pandas to read SQL query result into a DataFrame
+    df = pd.read_sql(sql_query, con=engine)
+
+    # Specify the CSV file path
+    csv_file_path = r'C:\Users\KShirnat\Documents\Python Scripts\Export.csv'
+
+    # Save the DataFrame to a CSV file
+    df.to_csv(csv_file_path, index=False)
+
+except pyodbc.Error as e:
+    print(f"Error: {e}")
+    
+try:
+    # SQL query to fetch data (customize this query)
+    mysql_query1 = '''SELECT Member_ID
+            FROM GMSPRD.MEMBER_MASTER
+            WHERE DeleteFlag = 0 ORDER BY DeleteFlag DESC
+            LIMIT 1'''
+
+    # Use pandas to read SQL query result into a DataFrame
+    df = pd.read_sql(mysql_query1, con=connection)
+
+    # Specify the CSV file path
+    csv_file_path1 = r'C:\Users\KShirnat\Documents\Python Scripts\Export_memberid.csv'
+
+    # Save the DataFrame to a CSV file
+    df.to_csv(csv_file_path1, index=False)
+
+    print(f'Data exported to {csv_file_path1}')
+
+except mysql.connector.Error as e:
+    print(f"Error: {e}")
+
+def read_csv_and_insert_to_mysql(csv_file_path, connection):
+    try:
+        # Read CSV file into a pandas DataFrame
+        df = pd.read_csv(csv_file_path)
+
+        # Open a connection to the MySQL database
+        with connection.cursor() as cursor:
+            # Iterate through rows in the DataFrame and insert into MySQL table
+            for index, row in df.iterrows():
+                # Customize the SQL query based on your table structure
+                sql_query = f"INSERT INTO kanchandb.user_master (Display_Name, Name, Designation, EmailID, Org, Sub_Org, Supervisor_Name, Supervisor_Email, Supervisor_No, Emp_ID) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                cursor.execute(sql_query, (row['DisplayName'], row['AD_NAME'], row['JOB_TITLE'], row['EMAIL'], row['ORGANIZATION'], row['SUB_ORG'], row['SUPERVISORNAME'], row['supervisoremail'], row['SUPERVISOR_NO'], row['EMPLOYEE_NO']))
+ 
+            # Commit the changes after the inserts
+            connection.commit()
+        
+    except Error as e:
+        print(f"Error: {e}")
+
+def update_ref_columns(connection):
+    try:
+        # Open a connection to the MySQL database
+        with connection.cursor() as cursor:
+            # Update ref_email_id and ref_user_name based on Display_Name
+            update_query = """
+            UPDATE kanchandb.user_master 
+            SET 
+                Location = 'Global',
+                Last_updated = '2023-06-01 22:01:57',
+                DeleteFlag = 0,
+                ref_email_id = CONCAT(REPLACE(Display_Name, ' ', '.'), '@maximintegrated.com'),
+                ref_user_name = REPLACE(Display_Name, ' ', '.')
+            WHERE 
+                Emp_ID = '11199'
+            """
+            cursor.execute(update_query)
+
+            # Commit the changes
+            connection.commit()
+
+    except Error as e:
+        print(f"Error: {e}")        
+
+def update_member_id(csv_file_path1, connection, target_column, condition_column, condition_value):
+    try:
+        # Open a connection to the MySQL database
+        with connection.cursor() as cursor:
+            # Customize the SQL query based on your table structure
+            sql_query = f"UPDATE kanchandb.user_master SET {target_column} = %s WHERE {condition_column} = %s"
+
+            # Read CSV file into a pandas DataFrame
+            df = pd.read_csv(csv_file_path1)
+
+            # Convert the specified condition column to a compatible data type (assuming it's an integer)
+            condition_value = int(condition_value)
+
+            # Iterate through rows in the DataFrame and update data in 'user_master' table
+            for index, row in df.iterrows():
+                # Convert the specified target column to a compatible data type
+                column_value = int(row[target_column])
+
+                # Execute the update query based on the condition
+                cursor.execute(sql_query, (column_value, condition_value))
+
+            # Commit the changes after the updates
+            connection.commit()
+
+    except Error as e:
+        print(f"Error: {e}")
+
+    finally:
+        # Close the database connection if it's a MySQL connection
+        if hasattr(connection, 'is_connected') and connection.is_connected():
+            connection.close()
+
+# Establish a connection to the MySQL database
+try:
+    mysql_connection_kanchandb = mysql.connector.connect(host=mysql_host_kanchandb, user=mysql_user_kanchandb, password=mysql_password_kanchandb, database=mysql_database_kanchandb)
+
+    # Call the function to read CSV and insert into MySQL
+    read_csv_and_insert_to_mysql(csv_file_path, mysql_connection_kanchandb)
+
+    # Call the function to update reference columns
+    update_ref_columns(mysql_connection_kanchandb)
+
+except Error as e:
+    print(f"Error: {e}")
+    
+            
+# CSV file path
+csv_file_path1 = r'C:\Users\KShirnat\Documents\Python Scripts\Export_memberid.csv'
+
+# Establish a connection to the MySQL database
+try:
+    mysql_connection_kanchandb = mysql.connector.connect(
+        host=mysql_host_kanchandb, user=mysql_user_kanchandb, password=mysql_password_kanchandb,
+        database=mysql_database_kanchandb)
+
+    # Specify the target column and condition (change these to your actual column names and condition)
+    target_column = 'Member_ID'
+    condition_column = 'Emp_ID'
+    condition_value = '11199'
+
+    # Call the function to update data in 'user_master' table based on the condition
+    update_member_id(csv_file_path1, mysql_connection_kanchandb, target_column, condition_column, condition_value)
+
+except Error as e:
+    print(f"Error: {e}")
